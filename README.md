@@ -18,8 +18,12 @@ that humans can still read it in a normal Markdown vault.
 - YAML-style frontmatter with required fields.
 - Absolute source paths in `source_paths`.
 - Required body sections such as `Verdict`, `Evidence`, and `Follow-Up`.
+- Empty required sections, reported as warnings by default.
 - Common secret patterns such as private keys, API key assignments, cookies, and
   token-like values.
+- Team-specific note contracts from `.agent-intake-lint.json`.
+- Baseline files for adopting the linter in existing note archives.
+- SARIF output for GitHub code scanning and other CI systems.
 
 It does not send files anywhere and does not need network access.
 
@@ -55,6 +59,73 @@ Emit machine-readable output:
 ```bash
 agent-intake-lint --json path/to/intake-notes
 ```
+
+Emit SARIF for CI annotations:
+
+```bash
+agent-intake-lint --format sarif path/to/intake-notes > agent-intake-lint.sarif
+```
+
+Fail CI on warnings as well as errors:
+
+```bash
+agent-intake-lint --strict path/to/intake-notes
+```
+
+Only print diagnostics:
+
+```bash
+agent-intake-lint --quiet path/to/intake-notes
+```
+
+Create a starter config:
+
+```bash
+agent-intake-lint --init-config .agent-intake-lint.json
+```
+
+Adopt the linter in an existing archive without fixing every old note first:
+
+```bash
+agent-intake-lint --write-baseline .agent-intake-baseline.json notes/
+agent-intake-lint --baseline .agent-intake-baseline.json notes/
+```
+
+## Configuration
+
+The CLI automatically discovers the nearest `.agent-intake-lint.json` from the
+first path being validated. Use `--config path/to/config.json` to pin a specific
+contract.
+
+```json
+{
+  "required_frontmatter": ["type", "status", "created_at", "source_paths"],
+  "allowed": {
+    "type": ["decision", "handoff", "incident", "observation"],
+    "status": ["current", "draft", "superseded"],
+    "confidence": ["high", "medium", "low"]
+  },
+  "required_headings": ["Verdict", "Evidence", "Follow-Up"],
+  "allow_relative_source_paths": true
+}
+```
+
+This lets each team preserve its own durable-memory contract while still using
+the same offline validator.
+
+## Exit Codes
+
+- `0`: no errors were found.
+- `1`: one or more errors were found, or warnings were found with `--strict`.
+- `2`: no Markdown files were found.
+
+## Project Status
+
+This is an offline-first validator for teams experimenting with durable agent
+handoff notes. It is intentionally small enough to audit, but supports the
+maintenance features a real shared-memory archive needs: custom contracts,
+incremental adoption through baselines, CI output, and secret-leak checks. Rule
+requests and bug reports are welcome through GitHub issues.
 
 ## Expected note shape
 

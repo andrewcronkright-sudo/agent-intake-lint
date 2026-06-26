@@ -1,0 +1,44 @@
+{
+  "required_frontmatter": [
+    "agent",
+    "category",
+    "confidence",
+    "created_at",
+    "source_paths",
+    "status",
+    "tags",
+    "type",
+    "workstream"
+  ],
+  "allowed": {
+    "type": [
+      "correction",
+      "decision",
+      "handoff",
+      "learning",
+      "observation",
+      "runbook",
+      "source_map",
+      "status"
+    ],
+    "status": [
+      "current",
+      "draft",
+      "stale",
+      "superseded"
+    ],
+    "confidence": [
+      "high",
+      "low",
+      "medium"
+    ]
+  },
+  "required_headings": [
+    "Verdict",
+    "Evidence",
+    "What Changed Or Was Learned",
+    "How Future Agents Should Use This",
+    "Follow-Up"
+  ],
+  "allow_relative_source_paths": false
+}

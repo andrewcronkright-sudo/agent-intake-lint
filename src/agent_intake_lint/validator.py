@@ -6,40 +6,7 @@ import re
 from pathlib import PurePosixPath
 from typing import Iterable
 
-
-REQUIRED_FRONTMATTER = {
-    "type",
-    "status",
-    "created_at",
-    "agent",
-    "category",
-    "workstream",
-    "source_paths",
-    "confidence",
-    "tags",
-}
-
-ALLOWED_TYPES = {
-    "observation",
-    "learning",
-    "decision",
-    "runbook",
-    "source_map",
-    "status",
-    "handoff",
-    "correction",
-}
-
-ALLOWED_STATUSES = {"current", "draft", "stale", "superseded"}
-ALLOWED_CONFIDENCE = {"high", "medium", "low"}
-
-REQUIRED_HEADINGS = [
-    "Verdict",
-    "Evidence",
-    "What Changed Or Was Learned",
-    "How Future Agents Should Use This",
-    "Follow-Up",
-]
+from .config import DEFAULT_CONFIG, ValidationConfig
 
 SECRET_PATTERNS = [
     (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"), "private key block"),
@@ -56,6 +23,11 @@ class Issue:
     line: int
     code: str
     message: str
+    severity: str = "error"
+
+    @property
+    def fingerprint(self) -> str:
+        return f"{self.path}:{self.code}:{self.message}"
 
 
 @dataclass(frozen=True)
@@ -65,21 +37,33 @@ class ValidationResult:
 
     @property
     def ok(self) -> bool:
-        return not self.issues
+        return self.error_count == 0
+
+    @property
+    def error_count(self) -> int:
+        return sum(1 for issue in self.issues if issue.severity == "error")
+
+    @property
+    def warning_count(self) -> int:
+        return sum(1 for issue in self.issues if issue.severity == "warning")
 
 
-def validate_markdown(text: str, path: str = "<memory>") -> ValidationResult:
+def validate_markdown(
+    text: str,
+    path: str = "<memory>",
+    config: ValidationConfig = DEFAULT_CONFIG,
+) -> ValidationResult:
     issues: list[Issue] = []
     frontmatter, body, body_start_line = _split_frontmatter(text, path, issues)
 
     if frontmatter is not None:
         parsed = _parse_frontmatter(frontmatter, path, issues)
-        _validate_frontmatter(parsed, path, issues)
+        _validate_frontmatter(parsed, path, issues, config)
     else:
         body = text
         body_start_line = 1
 
-    _validate_body(body, body_start_line, path, issues)
+    _validate_body(body, body_start_line, path, issues, config)
     _scan_for_secrets(text, path, issues)
 
     return ValidationResult(path=path, issues=tuple(issues))
@@ -157,14 +141,19 @@ def _strip_quotes(value: str) -> str:
     return value
 
 
-def _validate_frontmatter(parsed: dict[str, object], path: str, issues: list[Issue]) -> None:
-    missing = sorted(REQUIRED_FRONTMATTER.difference(parsed))
+def _validate_frontmatter(
+    parsed: dict[str, object],
+    path: str,
+    issues: list[Issue],
+    config: ValidationConfig,
+) -> None:
+    missing = sorted(config.required_frontmatter.difference(parsed))
     for key in missing:
         issues.append(Issue(path, 1, "frontmatter.required", f"missing required field: {key}"))
 
-    _check_allowed(parsed, "type", ALLOWED_TYPES, path, issues)
-    _check_allowed(parsed, "status", ALLOWED_STATUSES, path, issues)
-    _check_allowed(parsed, "confidence", ALLOWED_CONFIDENCE, path, issues)
+    _check_allowed(parsed, "type", set(config.allowed_types), path, issues)
+    _check_allowed(parsed, "status", set(config.allowed_statuses), path, issues)
+    _check_allowed(parsed, "confidence", set(config.allowed_confidence), path, issues)
 
     created_at = parsed.get("created_at")
     if isinstance(created_at, str):
@@ -174,17 +163,20 @@ def _validate_frontmatter(parsed: dict[str, object], path: str, issues: list[Iss
             issues.append(Issue(path, 1, "frontmatter.created_at", "created_at must be ISO-8601"))
 
     source_paths = parsed.get("source_paths")
-    if not isinstance(source_paths, list) or not source_paths:
+    if "source_paths" in config.required_frontmatter and (not isinstance(source_paths, list) or not source_paths):
         issues.append(Issue(path, 1, "frontmatter.source_paths", "source_paths must be a non-empty list"))
-    else:
+    elif isinstance(source_paths, list):
         for source_path in source_paths:
-            if not isinstance(source_path, str) or not PurePosixPath(source_path).is_absolute():
+            if (
+                not isinstance(source_path, str)
+                or (not config.allow_relative_source_paths and not PurePosixPath(source_path).is_absolute())
+            ):
                 issues.append(
                     Issue(path, 1, "frontmatter.source_paths", f"source path is not absolute: {source_path}")
                 )
 
     tags = parsed.get("tags")
-    if not isinstance(tags, list) or not tags:
+    if "tags" in config.required_frontmatter and (not isinstance(tags, list) or not tags):
         issues.append(Issue(path, 1, "frontmatter.tags", "tags must be a non-empty list"))
 
 
@@ -201,11 +193,22 @@ def _check_allowed(
         issues.append(Issue(path, 1, f"frontmatter.{key}", f"{key} must be one of: {allowed_values}"))
 
 
-def _validate_body(body: str, body_start_line: int, path: str, issues: list[Issue]) -> None:
-    headings = set(_iter_headings(body))
-    for heading in REQUIRED_HEADINGS:
+def _validate_body(
+    body: str,
+    body_start_line: int,
+    path: str,
+    issues: list[Issue],
+    config: ValidationConfig,
+) -> None:
+    sections = _collect_sections(body)
+    headings = set(sections)
+    for heading in config.required_headings:
         if heading not in headings:
             issues.append(Issue(path, body_start_line, "body.heading", f"missing section: {heading}"))
+        elif not sections[heading]:
+            issues.append(
+                Issue(path, body_start_line, "body.empty_section", f"section has no body: {heading}", "warning")
+            )
 
 
 def _iter_headings(body: str) -> Iterable[str]:
@@ -213,6 +216,22 @@ def _iter_headings(body: str) -> Iterable[str]:
         match = re.match(r"^#{2,6}\s+(.+?)\s*$", line)
         if match:
             yield match.group(1).strip()
+
+
+def _collect_sections(body: str) -> dict[str, str]:
+    sections: dict[str, list[str]] = {}
+    current: str | None = None
+
+    for line in body.splitlines():
+        match = re.match(r"^#{2,6}\s+(.+?)\s*$", line)
+        if match:
+            current = match.group(1).strip()
+            sections.setdefault(current, [])
+            continue
+        if current:
+            sections[current].append(line)
+
+    return {heading: "\n".join(lines).strip() for heading, lines in sections.items()}
 
 
 def _scan_for_secrets(text: str, path: str, issues: list[Issue]) -> None:

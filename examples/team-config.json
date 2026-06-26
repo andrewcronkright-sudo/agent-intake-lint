@@ -1,0 +1,22 @@
+{
+  "required_frontmatter": [
+    "type",
+    "status",
+    "created_at",
+    "agent",
+    "source_paths",
+    "confidence",
+    "tags"
+  ],
+  "allowed": {
+    "type": ["decision", "handoff", "incident", "observation"],
+    "status": ["current", "draft", "superseded"],
+    "confidence": ["high", "medium", "low"]
+  },
+  "required_headings": [
+    "Verdict",
+    "Evidence",
+    "Follow-Up"
+  ],
+  "allow_relative_source_paths": true
+}
